@@ -19,3 +19,6 @@ dashboard/benchmark_data/*.csv
 Thumbs.db
 .idea/
 .vscode/
+
+# Generated analysis inputs/outputs
+analysis/*.csv

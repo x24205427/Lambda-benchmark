@@ -130,64 +130,86 @@ def estimate_cost_per_1k(memory_mb, avg_billed_ms):
     return round((compute_cost + request_cost) * 1000, 5)
 
 
-def run_benchmark(function_prefix, memory_levels, path_suffix, method, body, warm_requests, region):
+def run_benchmark(function_prefix, memory_levels, path_suffix, method, body,
+                  warm_requests, region, runs=1):
+    """Benchmark each memory config. Repeats the full cold+warm sequence `runs`
+    times per config; aggregates warm samples across all runs (median + IQR for
+    robustness) and returns both the aggregated rows and the raw per-invocation
+    samples (used by the statistical analysis script)."""
     lambda_client = boto3.client("lambda", region_name=region)
     rows = []
+    raw_samples = []  # one dict per invocation: memory_mb, run, phase, billed_ms
 
     for mem in memory_levels:
         function_name = f"{function_prefix}-mem{mem}"
         mem_tag = f"mem{mem}"
         print(f"\n=== {mem} MB ({function_name}) ===")
 
-        print("Cold/first invocation...")
-        
-        force_cold_start(lambda_client, function_name)
-        
-        event = build_event(mem_tag, path_suffix, method, body)
-        status, client_ms, report = invoke_and_get_metrics(lambda_client, function_name, event)
-        
-        print(f"  status={status} client_elapsed={client_ms}ms billed={report['billed_ms']}ms "
-              f"init={report['init_ms']}ms max_mem_used={report['max_memory_mb']}MB")
-              
-        cold_billed = report["billed_ms"]
-        cold_init = report["init_ms"]
-
-        print(f"Warm invocations x{warm_requests} (Instantaneous)...")
+        cold_billed_runs = []
+        cold_init_runs = []
         warm_billed = []
-        
-        for i in range(warm_requests):
+
+        for run_idx in range(1, runs + 1):
+            if runs > 1:
+                print(f"-- run {run_idx}/{runs} --")
+
+            print("Cold/first invocation...")
+            force_cold_start(lambda_client, function_name)
             event = build_event(mem_tag, path_suffix, method, body)
             status, client_ms, report = invoke_and_get_metrics(lambda_client, function_name, event)
-            
+            print(f"  status={status} client_elapsed={client_ms}ms billed={report['billed_ms']}ms "
+                  f"init={report['init_ms']}ms max_mem_used={report['max_memory_mb']}MB")
             if report["billed_ms"] is not None:
-                warm_billed.append(report["billed_ms"])
-            else:
-                print(f"    - Missed log on warm run {i+1}")
+                cold_billed_runs.append(report["billed_ms"])
+                raw_samples.append({"memory_mb": mem, "run": run_idx, "phase": "cold",
+                                    "billed_ms": report["billed_ms"]})
+            if report["init_ms"] is not None:
+                cold_init_runs.append(report["init_ms"])
+
+            print(f"Warm invocations x{warm_requests} (Instantaneous)...")
+            for i in range(warm_requests):
+                event = build_event(mem_tag, path_suffix, method, body)
+                status, client_ms, report = invoke_and_get_metrics(lambda_client, function_name, event)
+                if report["billed_ms"] is not None:
+                    warm_billed.append(report["billed_ms"])
+                    raw_samples.append({"memory_mb": mem, "run": run_idx, "phase": "warm",
+                                        "billed_ms": report["billed_ms"]})
+                else:
+                    print(f"    - Missed log on warm run {i+1}")
+
+        # Cold metrics: median across runs (robust to a single unlucky cold start).
+        cold_billed = statistics.median(cold_billed_runs) if cold_billed_runs else None
+        cold_init = statistics.median(cold_init_runs) if cold_init_runs else None
 
         if not warm_billed:
             print("  WARNING: no warm billed-duration samples collected, skipping percentiles")
-            p50 = p95 = p99 = avg = None
-            cost = None
+            p50 = p95 = p99 = avg = med = iqr = cost = None
         else:
             p50, p95, p99 = percentile(warm_billed, 50), percentile(warm_billed, 95), percentile(warm_billed, 99)
             avg = statistics.mean(warm_billed)
+            med = statistics.median(warm_billed)
+            iqr = percentile(warm_billed, 75) - percentile(warm_billed, 25)
             cost = estimate_cost_per_1k(mem, avg)
             print(f"  warm billed p50={p50:.1f} p95={p95:.1f} p99={p99:.1f} ms "
-                  f"avg={avg:.1f}ms  est.cost/1k=${cost}  (n={len(warm_billed)})")
+                  f"avg={avg:.1f}ms median={med:.1f} IQR={iqr:.1f}  est.cost/1k=${cost}  "
+                  f"(n={len(warm_billed)} across {runs} run(s))")
 
         rows.append({
             "memory_mb": mem,
-            "cold_billed_ms": cold_billed,
-            "cold_init_ms": cold_init,
+            "cold_billed_ms": round(cold_billed, 2) if cold_billed is not None else None,
+            "cold_init_ms": round(cold_init, 2) if cold_init is not None else None,
             "warm_billed_p50_ms": round(p50, 2) if p50 is not None else None,
             "warm_billed_p95_ms": round(p95, 2) if p95 is not None else None,
             "warm_billed_p99_ms": round(p99, 2) if p99 is not None else None,
             "warm_billed_avg_ms": round(avg, 2) if avg is not None else None,
+            "warm_billed_median_ms": round(med, 2) if med is not None else None,
+            "warm_billed_iqr_ms": round(iqr, 2) if iqr is not None else None,
             "est_cost_per_1k_usd": cost,
             "warm_sample_count": len(warm_billed),
+            "runs": runs,
         })
 
-    return rows
+    return rows, raw_samples
 
 
 def save_csv(rows, path="results.csv"):
@@ -198,6 +220,17 @@ def save_csv(rows, path="results.csv"):
     print(f"\nSaved results to {path}")
 
 
+def save_raw_csv(raw_samples, path):
+    if not raw_samples:
+        print("No raw samples to save.")
+        return
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["memory_mb", "run", "phase", "billed_ms"])
+        writer.writeheader()
+        writer.writerows(raw_samples)
+    print(f"Saved {len(raw_samples)} raw samples to {path}")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Benchmark Lambda memory configurations via direct invoke + CloudWatch REPORT parsing")
     parser.add_argument("--function-prefix", required=True, help="SAM stack name, e.g. memory-benchmark (functions are named <prefix>-mem128 etc.)")
@@ -206,11 +239,15 @@ if __name__ == "__main__":
     parser.add_argument("--method", default="GET", choices=["GET", "POST"])
     parser.add_argument("--body", default=None, help="JSON body string for POST requests, e.g. /transform")
     parser.add_argument("--warm-requests", type=int, default=50)
+    parser.add_argument("--runs", type=int, default=1,
+                        help="Repeat the full cold+warm sequence N times per config for statistical robustness")
+    parser.add_argument("--raw-out", default=None,
+                        help="Optional path to write per-invocation raw samples (input for analysis/analyze.py)")
     parser.add_argument("--region", default="eu-west-1")
     parser.add_argument("--out", default="results.csv")
     args = parser.parse_args()
 
-    results = run_benchmark(
+    results, raw = run_benchmark(
         function_prefix=args.function_prefix,
         memory_levels=args.memory,
         path_suffix=args.path,
@@ -218,5 +255,8 @@ if __name__ == "__main__":
         body=args.body,
         warm_requests=args.warm_requests,
         region=args.region,
+        runs=args.runs,
     )
     save_csv(results, args.out)
+    if args.raw_out:
+        save_raw_csv(raw, args.raw_out)
