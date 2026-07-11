@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>URL Benchmark Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg:#0b0f1a; --bg2:#111827; --bg3:#1a2235; --border:#1e3a5f;
+    --accent:#3b82f6; --accent2:#8b5cf6; --green:#10b981; --yellow:#f59e0b;
+    --red:#ef4444; --text:#e2e8f0; --text2:#94a3b8; --text3:#64748b; --radius:12px;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:'Inter',system-ui,sans-serif; min-height:100vh; }
+  #topbar { background:var(--bg2); border-bottom:1px solid var(--border); padding:16px 24px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  .brand { font-size:20px; font-weight:800; background:linear-gradient(135deg,var(--accent),var(--accent2)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+  .brand-sub { font-size:12px; color:var(--text3); }
+  #content { max-width:1100px; margin:0 auto; padding:24px; }
+
+  .run-card { background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius); padding:20px; margin-bottom:20px; }
+  .run-row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .url-input { flex:1; min-width:240px; background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:11px 14px; color:var(--text); font-size:14px; outline:none; }
+  .url-input:focus { border-color:var(--accent); }
+  .samples-input { width:130px; background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:11px 14px; color:var(--text); font-size:14px; outline:none; }
+  .btn { display:inline-flex; align-items:center; gap:6px; padding:11px 20px; border-radius:8px; font-size:14px; font-weight:700; cursor:pointer; border:none; background:linear-gradient(135deg,var(--accent),var(--accent2)); color:#fff; transition:all .15s; white-space:nowrap; }
+  .btn:hover:not(:disabled) { opacity:.9; transform:translateY(-1px); }
+  .btn:disabled { opacity:.5; cursor:not-allowed; }
+  .hint { font-size:12px; color:var(--text3); margin-top:10px; }
+  .status-line { margin-top:12px; font-size:13px; font-family:monospace; min-height:18px; }
+  .status-line.err { color:var(--red); } .status-line.ok { color:var(--green); } .status-line.info { color:var(--text2); }
+
+  .kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:14px; margin-bottom:20px; }
+  .kpi-card { background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius); padding:16px; position:relative; overflow:hidden; }
+  .kpi-card::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:linear-gradient(90deg,var(--accent),var(--accent2)); }
+  .kpi-label { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:var(--text3); margin-bottom:8px; }
+  .kpi-value { font-size:24px; font-weight:800; line-height:1; }
+  .kpi-unit { font-size:12px; color:var(--text3); }
+  .kpi-desc { font-size:11px; color:var(--text3); margin-top:6px; word-break:break-all; }
+
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:20px; }
+  .card { background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius); padding:18px; }
+  .card-title { font-size:13px; font-weight:700; margin-bottom:14px; }
+  .chart-wrap { position:relative; height:240px; }
+
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th { text-align:left; padding:8px 10px; font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--text3); border-bottom:1px solid var(--border); }
+  td { padding:8px 10px; color:var(--text2); border-bottom:1px solid rgba(30,58,95,.4); }
+  .meta-key { color:var(--text3); }
+  .hidden { display:none; }
+  .empty { text-align:center; padding:60px 20px; color:var(--text3); }
+  .empty-icon { font-size:48px; margin-bottom:12px; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:700; }
+  .badge.ok { background:rgba(16,185,129,.15); color:var(--green); }
+  .badge.bad { background:rgba(239,68,68,.15); color:var(--red); }
+  .footer { text-align:center; color:var(--text3); font-size:11px; padding:20px; }
+  @media (max-width:760px){ .grid2 { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<div id="topbar">
+  <div>
+    <div class="brand">⚡ URL Benchmark Dashboard</div>
+    <div class="brand-sub">Measures real DNS · TCP · TLS · TTFB · total latency for any URL — served free from AWS Lambda</div>
+  </div>
+</div>
+
+<div id="content">
+  <div class="run-card">
+    <div class="run-row">
+      <input id="urlInput" class="url-input" placeholder="e.g. www.google.com  or  https://github.com" value="www.google.com"/>
+      <input id="samplesInput" class="samples-input" type="number" min="1" max="20" value="5" title="Samples (1-20)"/>
+      <button id="runBtn" class="btn" onclick="runBenchmark()">▶ Benchmark</button>
+    </div>
+    <div class="hint">Enter any website URL and the number of samples. Each sample is a full request measured server-side from eu-west-1.</div>
+    <div id="statusLine" class="status-line"></div>
+  </div>
+
+  <div id="results" class="hidden">
+    <div class="kpi-grid" id="kpiGrid"></div>
+    <div class="grid2">
+      <div class="card">
+        <div class="card-title">⏱️ Timing Breakdown (avg ms)</div>
+        <div class="chart-wrap"><canvas id="chartBreakdown"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-title">📊 Total Latency — per-sample spread</div>
+        <div class="chart-wrap"><canvas id="chartSamples"></canvas></div>
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-title">🔎 Response Details</div>
+      <table id="metaTable"><tbody></tbody></table>
+    </div>
+  </div>
+
+  <div id="emptyState" class="empty">
+    <div class="empty-icon">🌐</div>
+    <div style="font-size:16px;font-weight:700;color:var(--text2);margin-bottom:6px">No benchmark yet</div>
+    <div style="font-size:13px">Enter a URL above and hit Benchmark to see real latency measurements.</div>
+  </div>
+
+  <div id="history" class="card hidden" style="margin-bottom:20px">
+    <div class="card-title">🕑 Session History</div>
+    <table id="historyTable">
+      <thead><tr><th>URL</th><th>Status</th><th>Avg Total</th><th>DNS</th><th>TLS</th><th>TTFB</th><th>Size</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="footer">Static dashboard on GitHub Pages · Backend on AWS Lambda (always-free tier) · No data leaves your browser except the URL you benchmark</div>
+
+<script>
+// ── Backend endpoint (Lambda Function URL) ──────────────────
+const API_URL = "https://kyncd37kk24fdzbge6mwgosizy0vlpci.lambda-url.eu-west-1.on.aws/";
+
+let charts = {};
+const history = [];
+
+function setStatus(msg, cls) {
+  const el = document.getElementById('statusLine');
+  el.textContent = msg;
+  el.className = 'status-line ' + (cls || 'info');
+}
+
+async function runBenchmark() {
+  const url = document.getElementById('urlInput').value.trim();
+  const samples = parseInt(document.getElementById('samplesInput').value, 10) || 5;
+  if (!url) { setStatus('Please enter a URL.', 'err'); return; }
+
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true; btn.textContent = '⏳ Running…';
+  setStatus(`Benchmarking ${url} (${samples} samples)…`, 'info');
+
+  try {
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, samples }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      setStatus('Error: ' + (data.error || res.status), 'err');
+    } else {
+      render(data);
+      const failNote = data.samples_failed ? ` · ${data.samples_failed} failed` : '';
+      setStatus(`✓ Done — ${data.samples_ok}/${data.samples_requested} samples OK${failNote}`, data.samples_ok ? 'ok' : 'err');
+    }
+  } catch (e) {
+    setStatus('Request failed: ' + e.message + ' (is the API URL reachable?)', 'err');
+  } finally {
+    btn.disabled = false; btn.textContent = '▶ Benchmark';
+  }
+}
+
+function fmt(v, suffix='') { return v == null ? '—' : v + suffix; }
+function fmtBytes(b) {
+  if (b == null) return '—';
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+  return (b/1048576).toFixed(2) + ' MB';
+}
+
+function render(d) {
+  document.getElementById('emptyState').classList.add('hidden');
+  document.getElementById('results').classList.remove('hidden');
+
+  const t = d.timings || {};
+  const total = t.total_ms || {};
+  const statusOk = d.status && d.status < 400;
+
+  // KPIs
+  document.getElementById('kpiGrid').innerHTML = `
+    ${kpi('Avg Total', fmt(total.avg), 'ms', d.url)}
+    ${kpi('HTTP Status', d.status ? `<span class="badge ${statusOk?'ok':'bad'}">${d.status}</span>` : '—', '', d.samples_ok + '/' + d.samples_requested + ' ok')}
+    ${kpi('P95 Total', fmt(total.p95), 'ms', 'slowest 5%')}
+    ${kpi('Response Size', fmtBytes(d.size_bytes), '', d.content_type || '')}
+    ${kpi('Server', d.server || '—', '', d.scheme.toUpperCase())}
+  `;
+
+  // Breakdown chart (avg of each phase)
+  const phases = ['dns_ms','connect_ms','tls_ms','ttfb_ms'];
+  const phaseLabels = ['DNS','TCP Connect','TLS','TTFB'];
+  const phaseVals = phases.map(p => (t[p] && t[p].avg) || 0);
+  mkChart('chartBreakdown', {
+    type:'bar',
+    data:{ labels:phaseLabels, datasets:[{ label:'avg ms', data:phaseVals,
+      backgroundColor:['#3b82f6cc','#06b6d4cc','#8b5cf6cc','#f59e0bcc'], borderRadius:6 }] },
+    options:{ responsive:true, maintainAspectRatio:false, indexAxis:'y',
+      plugins:{legend:{display:false}},
+      scales:{ x:{grid:{color:'rgba(30,58,95,.5)'},ticks:{color:'#64748b'}},
+               y:{grid:{display:false},ticks:{color:'#94a3b8'}} } }
+  });
+
+  // Per-sample total latency
+  const runs = (d.runs || []).map((r,i)=> r.total_ms == null ? 0 : r.total_ms);
+  mkChart('chartSamples', {
+    type:'line',
+    data:{ labels: runs.map((_,i)=>'#'+(i+1)),
+      datasets:[{ label:'total ms', data:runs, borderColor:'#3b82f6',
+        backgroundColor:'#3b82f633', fill:true, tension:.3, pointRadius:4 }] },
+    options:{ responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{ x:{grid:{color:'rgba(30,58,95,.5)'},ticks:{color:'#64748b'}},
+               y:{grid:{color:'rgba(30,58,95,.5)'},ticks:{color:'#64748b'},title:{display:true,text:'ms',color:'#64748b'}} } }
+  });
+
+  // Meta table
+  const rows = [
+    ['Final URL', d.url],
+    ['Host', d.host],
+    ['Scheme', d.scheme],
+    ['HTTP Status', d.status ?? '—'],
+    ['Content-Type', d.content_type || '—'],
+    ['Server', d.server || '—'],
+    ['Response Size', fmtBytes(d.size_bytes)],
+    ['DNS (avg / p95)', `${fmt(t.dns_ms?.avg)} / ${fmt(t.dns_ms?.p95)} ms`],
+    ['TCP Connect (avg / p95)', `${fmt(t.connect_ms?.avg)} / ${fmt(t.connect_ms?.p95)} ms`],
+    ['TLS (avg / p95)', `${fmt(t.tls_ms?.avg)} / ${fmt(t.tls_ms?.p95)} ms`],
+    ['TTFB (avg / p95)', `${fmt(t.ttfb_ms?.avg)} / ${fmt(t.ttfb_ms?.p95)} ms`],
+    ['Total (min / avg / max)', `${fmt(total.min)} / ${fmt(total.avg)} / ${fmt(total.max)} ms`],
+    ['Samples OK / Requested', `${d.samples_ok} / ${d.samples_requested}`],
+  ];
+  if (d.errors && d.errors.length) rows.push(['Errors', d.errors.join('; ')]);
+  document.querySelector('#metaTable tbody').innerHTML = rows.map(
+    ([k,v])=>`<tr><td class="meta-key">${k}</td><td>${v}</td></tr>`).join('');
+
+  // History
+  history.unshift(d);
+  const histEl = document.getElementById('history');
+  histEl.classList.remove('hidden');
+  document.querySelector('#historyTable tbody').innerHTML = history.map(h => `
+    <tr>
+      <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h.host}</td>
+      <td>${h.status ? `<span class="badge ${h.status<400?'ok':'bad'}">${h.status}</span>` : '<span class="badge bad">ERR</span>'}</td>
+      <td>${fmt(h.timings?.total_ms?.avg)} ms</td>
+      <td>${fmt(h.timings?.dns_ms?.avg)} ms</td>
+      <td>${fmt(h.timings?.tls_ms?.avg)} ms</td>
+      <td>${fmt(h.timings?.ttfb_ms?.avg)} ms</td>
+      <td>${fmtBytes(h.size_bytes)}</td>
+    </tr>`).join('');
+}
+
+function kpi(label, value, unit, desc) {
+  return `<div class="kpi-card">
+    <div class="kpi-label">${label}</div>
+    <div><span class="kpi-value">${value}</span> <span class="kpi-unit">${unit}</span></div>
+    <div class="kpi-desc">${desc || ''}</div>
+  </div>`;
+}
+
+function mkChart(id, cfg) {
+  const c = document.getElementById(id);
+  if (charts[id]) charts[id].destroy();
+  charts[id] = new Chart(c.getContext('2d'), cfg);
+}
+
+// Enter key triggers benchmark
+document.getElementById('urlInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') runBenchmark();
+});
+</script>
+</body>
+</html>

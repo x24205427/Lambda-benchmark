@@ -1,0 +1,153 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Memory Allocation Benchmark - deploys the same FastAPI app as 7 separate
+  Lambda functions, one per memory configuration (128MB - 4096MB), so each
+  can be benchmarked independently for cold start, warm latency and cost.
+
+Globals:
+  Function:
+    Runtime: python3.13
+    Timeout: 30
+    CodeUri: app/
+    Handler: main.handler
+    # OPTIMIZATION: Enabled X-Ray distributed tracing for cold-start decomposition 
+    Tracing: Active
+    Environment:
+      Variables:
+        DDB_TABLE_NAME: !Ref BenchmarkTable
+
+Resources:
+
+  BenchmarkTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      PrimaryKey:
+        Name: item_id
+        Type: String
+      TableName: !Sub "${AWS::StackName}-benchmark-items"
+
+  BenchmarkApi:
+    # OPTIMIZATION: Upgraded to HTTP API (v2) for lower latency and cost
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: prod
+
+  Function128:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-mem128"
+      MemorySize: 128
+      Environment:
+        Variables:
+          MEM_TAG: mem128
+      Events:
+        Health: {Type: HttpApi, Properties: {Path: /mem128/health, Method: GET, ApiId: !Ref BenchmarkApi}}
+        Transform: {Type: HttpApi, Properties: {Path: /mem128/transform, Method: POST, ApiId: !Ref BenchmarkApi}}
+        Items: {Type: HttpApi, Properties: {Path: "/mem128/items/{item_id}", Method: GET, ApiId: !Ref BenchmarkApi}}
+      Policies: [DynamoDBCrudPolicy: {TableName: !Ref BenchmarkTable}]
+
+  Function256:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-mem256"
+      MemorySize: 256
+      Environment:
+        Variables:
+          MEM_TAG: mem256
+      Events:
+        Health: {Type: HttpApi, Properties: {Path: /mem256/health, Method: GET, ApiId: !Ref BenchmarkApi}}
+        Transform: {Type: HttpApi, Properties: {Path: /mem256/transform, Method: POST, ApiId: !Ref BenchmarkApi}}
+        Items: {Type: HttpApi, Properties: {Path: "/mem256/items/{item_id}", Method: GET, ApiId: !Ref BenchmarkApi}}
+      Policies: [DynamoDBCrudPolicy: {TableName: !Ref BenchmarkTable}]
+
+  Function512:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-mem512"
+      MemorySize: 512
+      Environment:
+        Variables:
+          MEM_TAG: mem512
+      Events:
+        Health: {Type: HttpApi, Properties: {Path: /mem512/health, Method: GET, ApiId: !Ref BenchmarkApi}}
+        Transform: {Type: HttpApi, Properties: {Path: /mem512/transform, Method: POST, ApiId: !Ref BenchmarkApi}}
+        Items: {Type: HttpApi, Properties: {Path: "/mem512/items/{item_id}", Method: GET, ApiId: !Ref BenchmarkApi}}
+      Policies: [DynamoDBCrudPolicy: {TableName: !Ref BenchmarkTable}]
+
+  Function1024:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-mem1024"
+      MemorySize: 1024
+      Environment:
+        Variables:
+          MEM_TAG: mem1024
+      Events:
+        Health: {Type: HttpApi, Properties: {Path: /mem1024/health, Method: GET, ApiId: !Ref BenchmarkApi}}
+        Transform: {Type: HttpApi, Properties: {Path: /mem1024/transform, Method: POST, ApiId: !Ref BenchmarkApi}}
+        Items: {Type: HttpApi, Properties: {Path: "/mem1024/items/{item_id}", Method: GET, ApiId: !Ref BenchmarkApi}}
+      Policies: [DynamoDBCrudPolicy: {TableName: !Ref BenchmarkTable}]
+
+  Function2048:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-mem2048"
+      MemorySize: 2048
+      Environment:
+        Variables:
+          MEM_TAG: mem2048
+      Events:
+        Health: {Type: HttpApi, Properties: {Path: /mem2048/health, Method: GET, ApiId: !Ref BenchmarkApi}}
+        Transform: {Type: HttpApi, Properties: {Path: /mem2048/transform, Method: POST, ApiId: !Ref BenchmarkApi}}
+        Items: {Type: HttpApi, Properties: {Path: "/mem2048/items/{item_id}", Method: GET, ApiId: !Ref BenchmarkApi}}
+      Policies: [DynamoDBCrudPolicy: {TableName: !Ref BenchmarkTable}]
+
+  Function3008:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-mem3008"
+      MemorySize: 3008
+      Environment:
+        Variables:
+          MEM_TAG: mem3008
+      Events:
+        Health: {Type: HttpApi, Properties: {Path: /mem3008/health, Method: GET, ApiId: !Ref BenchmarkApi}}
+        Transform: {Type: HttpApi, Properties: {Path: /mem3008/transform, Method: POST, ApiId: !Ref BenchmarkApi}}
+        Items: {Type: HttpApi, Properties: {Path: "/mem3008/items/{item_id}", Method: GET, ApiId: !Ref BenchmarkApi}}
+      Policies: [DynamoDBCrudPolicy: {TableName: !Ref BenchmarkTable}]
+
+  # ---------------------------------------------------------------------------
+  # URL Benchmarker - fetches any user-supplied URL and returns timing metrics.
+  # Exposed via a public Function URL (CORS-enabled) so the static GitHub Pages
+  # dashboard can call it directly. Stdlib-only, always-free-tier friendly.
+  # ---------------------------------------------------------------------------
+  UrlBenchmarkFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-urlbench"
+      CodeUri: urlbench/
+      Handler: main.handler
+      MemorySize: 256
+      Timeout: 30
+      # This function does not touch DynamoDB; drop the inherited env var.
+      Environment:
+        Variables: {}
+      FunctionUrlConfig:
+        AuthType: NONE
+        Cors:
+          AllowOrigins: ["*"]
+          AllowMethods: ["*"]
+          AllowHeaders: ["content-type"]
+
+Outputs:
+  UrlBenchmarkFunctionUrl:
+    Description: Public Function URL the dashboard calls to benchmark a URL
+    Value: !GetAtt UrlBenchmarkFunctionUrl.FunctionUrl
+  ApiBaseUrl:
+    Description: Base URL for the API Gateway stage
+    Value: !Sub "https://${BenchmarkApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
+  TableName:
+    Value: !Ref BenchmarkTable
+  FunctionNames:
+    Value: !Sub "${AWS::StackName}-mem128, ${AWS::StackName}-mem256, ${AWS::StackName}-mem512, ${AWS::StackName}-mem1024, ${AWS::StackName}-mem2048, ${AWS::StackName}-mem3008"

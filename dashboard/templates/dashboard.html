@@ -1,0 +1,1398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>AWS Lambda Benchmark Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  :root {
+    --bg: #0b0f1a;
+    --bg2: #111827;
+    --bg3: #1a2235;
+    --bg4: #1e2d45;
+    --border: #1e3a5f;
+    --accent: #3b82f6;
+    --accent2: #8b5cf6;
+    --accent3: #06b6d4;
+    --green: #10b981;
+    --yellow: #f59e0b;
+    --red: #ef4444;
+    --text: #e2e8f0;
+    --text2: #94a3b8;
+    --text3: #64748b;
+    --card-glow: 0 0 30px rgba(59,130,246,0.08);
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Inter', system-ui, sans-serif; display: flex; height: 100vh; overflow: hidden; }
+
+  /* ── SIDEBAR ── */
+  #sidebar {
+    width: 220px; min-width: 220px; background: var(--bg2);
+    border-right: 1px solid var(--border); display: flex; flex-direction: column;
+    padding: 0; overflow-y: auto; z-index: 10;
+  }
+  .sidebar-brand { padding: 20px 16px 16px; border-bottom: 1px solid var(--border); }
+  .brand-icon { width: 36px; height: 36px; background: linear-gradient(135deg,var(--accent),var(--accent2)); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; margin-bottom: 8px; }
+  .brand-name { font-size: 14px; font-weight: 700; color: var(--text); }
+  .brand-sub { font-size: 10px; color: var(--text3); margin-top: 2px; letter-spacing: 0.05em; text-transform: uppercase; }
+  .nav-section { padding: 8px 0; }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 10px 16px; cursor: pointer; border-radius: 0; font-size: 13px; color: var(--text2); transition: all 0.15s; border-left: 3px solid transparent; }
+  .nav-item:hover { background: var(--bg3); color: var(--text); }
+  .nav-item.active { background: rgba(59,130,246,0.12); color: var(--accent); border-left-color: var(--accent); }
+  .nav-item .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-left: auto; }
+  .nav-icon { font-size: 15px; width: 18px; text-align: center; }
+  .sidebar-footer { padding: 16px; border-top: 1px solid var(--border); font-size: 11px; color: var(--text3); margin-top: auto; }
+
+  /* ── MAIN ── */
+  #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* ── TOPBAR ── */
+  #topbar {
+    background: var(--bg2); border-bottom: 1px solid var(--border);
+    padding: 14px 24px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  .topbar-title h1 { font-size: 22px; font-weight: 800; background: linear-gradient(135deg,var(--accent),var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .topbar-title p { font-size: 12px; color: var(--text3); margin-top: 2px; }
+  .topbar-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; border: none; transition: all 0.15s; white-space: nowrap; }
+  .btn-primary { background: linear-gradient(135deg,var(--accent),var(--accent2)); color: #fff; }
+  .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+  .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text2); }
+  .btn-outline:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-demo { background: linear-gradient(135deg,#f59e0b,#ef4444); color: #fff; font-weight: 700; box-shadow: 0 0 20px rgba(245,158,11,0.3); }
+  .btn-demo:hover { opacity: 0.9; transform: translateY(-1px); box-shadow: 0 0 30px rgba(245,158,11,0.5); }
+  .btn-ghost { background: var(--bg3); color: var(--text2); }
+  .btn-ghost:hover { background: var(--bg4); color: var(--text); }
+
+  /* ── FILTER BAR ── */
+  #filterbar {
+    background: var(--bg2); border-bottom: 1px solid var(--border);
+    padding: 10px 24px; display: flex; gap: 20px; align-items: center; flex-wrap: wrap;
+  }
+  .filter-group { display: flex; align-items: center; gap: 8px; }
+  .filter-label { font-size: 11px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 0.06em; }
+  .filter-pills { display: flex; gap: 4px; }
+  .pill { padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 600; cursor: pointer; border: 1px solid var(--border); color: var(--text2); background: transparent; transition: all 0.15s; }
+  .pill.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .pill:hover:not(.active) { border-color: var(--accent); color: var(--accent); }
+  .mem-checks { display: flex; gap: 4px; flex-wrap: wrap; }
+  .mem-check { padding: 3px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; border: 1px solid var(--border); color: var(--text3); background: transparent; transition: all 0.15s; }
+  .mem-check.active { background: var(--bg4); border-color: var(--accent3); color: var(--accent3); }
+
+  /* ── CONTENT ── */
+  #content { flex: 1; overflow-y: auto; padding: 20px 24px; }
+
+  /* SECTION PAGES */
+  .page { display: none; }
+  .page.active { display: block; }
+
+  /* ── KPI GRID ── */
+  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 14px; margin-bottom: 20px; }
+  .kpi-card {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 16px; position: relative; overflow: hidden; transition: transform 0.15s, box-shadow 0.15s;
+  }
+  .kpi-card:hover { transform: translateY(-2px); box-shadow: var(--card-glow); }
+  .kpi-card::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; background: linear-gradient(90deg,var(--accent),var(--accent2)); }
+  .kpi-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text3); margin-bottom: 8px; }
+  .kpi-main { display: flex; align-items: flex-end; gap: 4px; }
+  .kpi-value { font-size: 26px; font-weight: 800; color: var(--text); line-height: 1; }
+  .kpi-unit { font-size: 13px; color: var(--text3); margin-bottom: 3px; }
+  .kpi-desc { font-size: 11px; color: var(--text3); margin-top: 4px; }
+  .kpi-trend { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 600; color: var(--green); margin-top: 6px; }
+  .kpi-icon { position: absolute; right: 14px; top: 14px; font-size: 20px; opacity: 0.5; }
+
+  /* ── CHART GRID ── */
+  .chart-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 16px; }
+  .chart-grid-3 { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; }
+  .chart-full { grid-column: 1/-1; }
+  .chart-card {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 18px; box-shadow: var(--card-glow);
+  }
+  .chart-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 2px; }
+  .chart-subtitle { font-size: 11px; color: var(--text3); margin-bottom: 14px; }
+  .chart-wrap { position: relative; height: 220px; }
+
+  /* ── TABLE ── */
+  .table-card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; margin-top: 16px; }
+  .table-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .search-input { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; color: var(--text); font-size: 12px; width: 220px; outline: none; }
+  .search-input:focus { border-color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  thead th { padding: 10px 12px; text-align: left; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text3); border-bottom: 1px solid var(--border); cursor: pointer; white-space: nowrap; user-select: none; }
+  thead th:hover { color: var(--text); }
+  tbody tr { border-bottom: 1px solid rgba(30,58,95,0.4); transition: background 0.1s; }
+  tbody tr:hover { background: var(--bg3); }
+  tbody td { padding: 9px 12px; color: var(--text2); }
+  .ep-badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; }
+  .ep-badge.health { background: rgba(59,130,246,0.15); color: #60a5fa; }
+  .ep-badge.transform { background: rgba(139,92,246,0.15); color: #a78bfa; }
+  .ep-badge.io { background: rgba(6,182,212,0.15); color: #22d3ee; }
+  .score-bar { display: flex; align-items: center; gap: 8px; }
+  .score-fill { height: 4px; border-radius: 2px; background: linear-gradient(90deg,var(--accent),var(--accent2)); }
+
+  /* ── INSIGHTS ── */
+  .insights-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-top: 16px; }
+  .insight-list { display: flex; flex-direction: column; gap: 10px; }
+  .insight-item { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; display: flex; gap: 10px; }
+  .insight-num { font-size: 10px; font-weight: 800; color: var(--accent); background: rgba(59,130,246,0.1); border-radius: 4px; padding: 2px 6px; height: fit-content; white-space: nowrap; }
+  .insight-text { font-size: 12px; color: var(--text2); line-height: 1.5; }
+  .rec-card { background: linear-gradient(135deg,rgba(59,130,246,0.1),rgba(139,92,246,0.1)); border: 1px solid rgba(59,130,246,0.3); border-radius: var(--radius); padding: 20px; }
+  .rec-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); margin-bottom: 12px; }
+  .rec-memory { font-size: 48px; font-weight: 800; background: linear-gradient(135deg,var(--accent),var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; line-height: 1; }
+  .rec-unit { font-size: 18px; font-weight: 600; color: var(--text2); }
+  .rec-score { display: inline-flex; align-items: center; gap: 6px; background: rgba(16,185,129,0.15); color: var(--green); border-radius: 6px; padding: 4px 10px; font-size: 11px; font-weight: 700; margin: 10px 0; }
+  .rec-reason { font-size: 12px; color: var(--text2); line-height: 1.6; }
+
+  /* ── HEATMAP ── */
+  .heatmap-wrap { overflow-x: auto; }
+  .heatmap-table { width: 100%; border-collapse: separate; border-spacing: 3px; }
+  .heatmap-table th { font-size: 11px; color: var(--text3); padding: 6px 8px; text-align: center; font-weight: 600; }
+  .heatmap-table td { padding: 8px 6px; border-radius: 6px; text-align: center; font-size: 11px; font-weight: 600; min-width: 70px; }
+  .hm-label { text-align: left !important; color: var(--text2); font-size: 11px; font-weight: 600; white-space: nowrap; padding-right: 12px; }
+
+
+  /* ── TERMINAL ── */
+  #terminal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85);
+    z-index: 1000; align-items: center; justify-content: center; padding: 20px;
+  }
+  #terminal-overlay.show { display: flex; }
+  .terminal-box {
+    background: #0d1117; border: 1px solid #30363d; border-radius: 12px;
+    width: 100%; max-width: 820px; max-height: 80vh; display: flex; flex-direction: column;
+    box-shadow: 0 25px 50px rgba(0,0,0,0.8);
+  }
+  .terminal-header { background: #161b22; padding: 12px 16px; border-bottom: 1px solid #30363d; border-radius: 12px 12px 0 0; display: flex; align-items: center; gap: 8px; }
+  .term-dot { width: 12px; height: 12px; border-radius: 50%; }
+  .term-title { font-size: 12px; color: #8b949e; margin-left: 8px; font-family: monospace; }
+  .term-close { margin-left: auto; background: none; border: none; color: #8b949e; cursor: pointer; font-size: 16px; padding: 0 4px; }
+  .term-close:hover { color: #fff; }
+  #terminal-output {
+    flex: 1; overflow-y: auto; padding: 16px; font-family: 'Consolas','Fira Code',monospace;
+    font-size: 12px; line-height: 1.6; color: #c9d1d9;
+  }
+  .term-cmd { color: #58a6ff; }
+  .term-info { color: #8b949e; }
+  .term-progress { color: #f0883e; }
+  .term-log { color: #3fb950; }
+  .term-success { color: #56d364; font-weight: 600; }
+  .term-error { color: #f85149; }
+  .term-done { color: #bc8cff; font-weight: 700; }
+  .term-footer { padding: 12px 16px; border-top: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; }
+  .term-status { font-size: 12px; color: #8b949e; font-family: monospace; }
+  #term-progress-bar { height: 4px; background: #21262d; border-radius: 2px; margin-top: 4px; }
+  #term-progress-fill { height: 100%; background: linear-gradient(90deg,#58a6ff,#bc8cff); border-radius: 2px; width: 0; transition: width 0.5s; }
+  .pulse { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #3fb950; animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* ── UPLOAD AREA ── */
+  .upload-zone { border: 2px dashed var(--border); border-radius: var(--radius); padding: 40px; text-align: center; cursor: pointer; transition: all 0.2s; background: var(--bg3); }
+  .upload-zone:hover { border-color: var(--accent); background: rgba(59,130,246,0.05); }
+  .upload-zone.drag { border-color: var(--accent2); background: rgba(139,92,246,0.05); }
+
+  /* ── RADAR ── */
+  .radar-wrap { display: flex; align-items: center; justify-content: center; height: 280px; }
+
+  /* SCATTER quadrant */
+  .quadrant-labels { position: relative; }
+
+  /* MISC */
+  .section-title { font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .section-title span { font-size: 12px; color: var(--text3); font-weight: 400; }
+  .badge { display: inline-flex; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; }
+  .badge-blue { background: rgba(59,130,246,0.15); color: var(--accent); }
+
+  .loading-skeleton { background: linear-gradient(90deg, var(--bg3) 25%, var(--bg4) 50%, var(--bg3) 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 4px; }
+  @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+
+  .tooltip-val { color: #fff; font-weight: 700; }
+
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg2); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .no-data { text-align: center; padding: 60px 20px; color: var(--text3); }
+  .no-data-icon { font-size: 48px; margin-bottom: 12px; }
+
+  @media (max-width: 768px) {
+    #sidebar { display: none; }
+    .chart-grid { grid-template-columns: 1fr; }
+    .insights-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<nav id="sidebar">
+  <div class="sidebar-brand">
+    <div class="brand-icon">⚡</div>
+    <div class="brand-name">Lambda Bench</div>
+    <div class="brand-sub">FastAPI · EU-WEST-1</div>
+  </div>
+  <div class="nav-section">
+    <div class="nav-item active" onclick="showPage('dashboard',this)">
+      <span class="nav-icon">📊</span> Dashboard <span class="dot"></span>
+    </div>
+    <div class="nav-item" onclick="showPage('health',this)">
+      <span class="nav-icon">💚</span> Health Endpoint
+    </div>
+    <div class="nav-item" onclick="showPage('transform',this)">
+      <span class="nav-icon">🔄</span> Transform Endpoint
+    </div>
+    <div class="nav-item" onclick="showPage('io',this)">
+      <span class="nav-icon">💽</span> I/O Endpoint
+    </div>
+    <div class="nav-item" onclick="showPage('cost',this)">
+      <span class="nav-icon">💰</span> Cost Analysis
+    </div>
+    <div class="nav-item" onclick="showPage('performance',this)">
+      <span class="nav-icon">🚀</span> Performance
+    </div>
+    <div class="nav-item" onclick="showPage('coldstart',this)">
+      <span class="nav-icon">❄️</span> Cold Start
+    </div>
+    <div class="nav-item" onclick="showPage('rawdata',this)">
+      <span class="nav-icon">📋</span> Raw Data
+    </div>
+  </div>
+  <div class="sidebar-footer">v1.0 · Benchmark Dashboard</div>
+</nav>
+
+<!-- MAIN -->
+<div id="main">
+
+  <!-- TOPBAR -->
+  <div id="topbar">
+    <div class="topbar-title">
+      <h1>AWS Lambda Memory Benchmark Analysis</h1>
+      <p>Performance and Cost Analysis of FastAPI Serverless Application</p>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn btn-demo" onclick="openTerminal()">
+        ⚡ Run Benchmark — Live AWS Lambda
+      </button>
+      <label class="btn btn-outline" style="cursor:pointer">
+        ⬆️ Upload CSV
+        <input type="file" id="csvUpload" multiple accept=".csv" style="display:none" onchange="uploadCSV(this)">
+      </label>
+      <button class="btn btn-ghost" onclick="resetData()">↺ Reset</button>
+    </div>
+  </div>
+
+  <!-- FILTER BAR -->
+  <div id="filterbar">
+    <div class="filter-group">
+      <span class="filter-label">Endpoint</span>
+      <div class="filter-pills">
+        <span class="pill active" onclick="setFilter('endpoint','both',this)">All</span>
+        <span class="pill" onclick="setFilter('endpoint','health',this)">Health</span>
+        <span class="pill" onclick="setFilter('endpoint','transform',this)">Transform</span>
+        <span class="pill" onclick="setFilter('endpoint','io',this)">I/O</span>
+      </div>
+    </div>
+    <div class="filter-group">
+      <span class="filter-label">Memory</span>
+      <div class="mem-checks" id="memChecks"></div>
+    </div>
+    <div class="filter-group">
+      <span class="filter-label">Type</span>
+      <div class="filter-pills">
+        <span class="pill active" onclick="setFilter('type','all',this)">All</span>
+        <span class="pill" onclick="setFilter('type','cold',this)">Cold</span>
+        <span class="pill" onclick="setFilter('type','warm',this)">Warm</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- CONTENT -->
+  <div id="content">
+
+    <!-- ═══════════════ EMPTY STATE ═══════════════ -->
+    <div id="emptyState" style="display:none">
+      <div class="no-data">
+        <div class="no-data-icon">📭</div>
+        <div style="font-size:16px;font-weight:700;color:var(--text2);margin-bottom:6px">No benchmark data loaded</div>
+        <div style="font-size:13px;max-width:440px;margin:0 auto 4px">
+          This dashboard only displays real measurements. Run a benchmark against your
+          deployed AWS Lambda stack, or upload benchmark CSV files to get started.
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════ PAGE: DASHBOARD ═══════════════ -->
+    <div class="page active" id="page-dashboard">
+      <!-- KPIs -->
+      <div class="kpi-grid" id="kpiGrid"></div>
+
+      <!-- Charts Row 1 -->
+      <div class="chart-grid" style="margin-bottom:16px">
+        <div class="chart-card">
+          <div class="chart-title">Response Time vs Memory</div>
+          <div class="chart-subtitle">Warm average response time (ms)</div>
+          <div class="chart-wrap"><canvas id="chartResponseTime"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Cold Start Comparison</div>
+          <div class="chart-subtitle">Health vs Transform vs I/O</div>
+          <div class="chart-wrap"><canvas id="chartColdStart"></canvas></div>
+        </div>
+      </div>
+
+      <!-- Charts Row 2 -->
+      <div class="chart-grid" style="margin-bottom:16px">
+        <div class="chart-card">
+          <div class="chart-title">Estimated Cost per 1M Requests</div>
+          <div class="chart-subtitle">Area chart — lower is better</div>
+          <div class="chart-wrap"><canvas id="chartCost"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Cost vs Performance Quadrant</div>
+          <div class="chart-subtitle">Find the sweet spot — bottom-left wins</div>
+          <div class="chart-wrap"><canvas id="chartQuadrant"></canvas></div>
+        </div>
+      </div>
+
+      <!-- Insights + Recommendation -->
+      <div class="insights-grid">
+        <div class="chart-card">
+          <div class="section-title">💡 AI Insights <span>Auto-generated from benchmark data</span></div>
+          <div class="insight-list" id="insightList"></div>
+        </div>
+        <div class="rec-card">
+          <div class="rec-title">⭐ Recommended Configuration</div>
+          <div id="recContent"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════ PAGE: HEALTH ═══════════════ -->
+    <div class="page" id="page-health">
+      <div class="kpi-grid" id="healthKpis"></div>
+      <div class="chart-grid" style="margin-bottom:16px">
+        <div class="chart-card">
+          <div class="chart-title">Health Endpoint · Latency vs Memory</div>
+          <div class="chart-subtitle">Warm average billed duration (ms)</div>
+          <div class="chart-wrap"><canvas id="chartHealthLatency"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Health Endpoint · Billed Duration</div>
+          <div class="chart-subtitle">Avg billed duration per memory tier</div>
+          <div class="chart-wrap"><canvas id="chartHealthBilled"></canvas></div>
+        </div>
+      </div>
+      <div class="table-card">
+        <div class="table-header">
+          <div class="section-title" style="margin-bottom:0">Health Summary Table</div>
+          <input class="search-input" placeholder="🔍 Search..." oninput="filterTable('healthTable',this.value)">
+        </div>
+        <table id="healthTable"><thead></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <!-- ═══════════════ PAGE: TRANSFORM ═══════════════ -->
+    <div class="page" id="page-transform">
+      <div class="kpi-grid" id="transformKpis"></div>
+      <div class="chart-grid" style="margin-bottom:16px">
+        <div class="chart-card">
+          <div class="chart-title">Transform Endpoint · Latency vs Memory</div>
+          <div class="chart-subtitle">Warm average billed duration (ms)</div>
+          <div class="chart-wrap"><canvas id="chartTransformLatency"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Transform Endpoint · Cost Analysis</div>
+          <div class="chart-subtitle">Estimated cost per 1M requests ($)</div>
+          <div class="chart-wrap"><canvas id="chartTransformCost"></canvas></div>
+        </div>
+      </div>
+      <div class="table-card">
+        <div class="table-header">
+          <div class="section-title" style="margin-bottom:0">Transform Summary Table</div>
+          <input class="search-input" placeholder="🔍 Search..." oninput="filterTable('transformTable',this.value)">
+        </div>
+        <table id="transformTable"><thead></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <!-- ═══════════════ PAGE: I/O ═══════════════ -->
+    <div class="page" id="page-io">
+      <div class="kpi-grid" id="ioKpis"></div>
+      <div class="chart-grid" style="margin-bottom:16px">
+        <div class="chart-card">
+          <div class="chart-title">I/O Endpoint · Latency vs Memory</div>
+          <div class="chart-subtitle">Warm average billed duration (ms)</div>
+          <div class="chart-wrap"><canvas id="chartIoLatency"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">I/O Endpoint · Billed Duration</div>
+          <div class="chart-subtitle">Avg billed duration per memory tier</div>
+          <div class="chart-wrap"><canvas id="chartIoBilled"></canvas></div>
+        </div>
+      </div>
+      <div class="table-card">
+        <div class="table-header">
+          <div class="section-title" style="margin-bottom:0">I/O Summary Table</div>
+          <input class="search-input" placeholder="🔍 Search..." oninput="filterTable('ioTable',this.value)">
+        </div>
+        <table id="ioTable"><thead></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <!-- ═══════════════ PAGE: COST ═══════════════ -->
+    <div class="page" id="page-cost">
+      <div class="chart-grid" style="margin-bottom:16px">
+        <div class="chart-card">
+          <div class="chart-title">Cost per 1M Requests — All Endpoints</div>
+          <div class="chart-subtitle">Area chart · find the most cost-efficient tier</div>
+          <div class="chart-wrap"><canvas id="chartCostAll"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Billed Duration by Memory</div>
+          <div class="chart-subtitle">Average billed duration (ms)</div>
+          <div class="chart-wrap"><canvas id="chartBilledAll"></canvas></div>
+        </div>
+      </div>
+      <div class="chart-grid">
+        <div class="chart-card chart-full">
+          <div class="chart-title">Performance Heatmap</div>
+          <div class="chart-subtitle">Color intensity = relative performance (darker = worse)</div>
+          <div class="heatmap-wrap" id="heatmapWrap"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════ PAGE: PERFORMANCE ═══════════════ -->
+    <div class="page" id="page-performance">
+      <div class="chart-grid" style="margin-bottom:16px">
+        <div class="chart-card">
+          <div class="chart-title">Performance Score — Radar</div>
+          <div class="chart-subtitle">Weighted: 40% latency · 30% cost · 20% cold start · 10% mem efficiency</div>
+          <div class="radar-wrap"><canvas id="chartRadar"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Scatter: Cost vs Latency Bubble</div>
+          <div class="chart-subtitle">Bubble size = cost · Color = endpoint</div>
+          <div class="chart-wrap"><canvas id="chartScatter"></canvas></div>
+        </div>
+      </div>
+      <div class="table-card">
+        <div class="table-header">
+          <div class="section-title" style="margin-bottom:0">Full Performance Table <span>Sortable · click headers</span></div>
+          <input class="search-input" placeholder="🔍 Search..." oninput="filterTable('perfTable',this.value)">
+        </div>
+        <table id="perfTable"><thead></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <!-- ═══════════════ PAGE: COLD START ═══════════════ -->
+    <div class="page" id="page-coldstart">
+      <div class="chart-grid" style="margin-bottom:16px">
+        <div class="chart-card">
+          <div class="chart-title">Cold Start Init Time by Memory</div>
+          <div class="chart-subtitle">Init duration reported by Lambda runtime (ms)</div>
+          <div class="chart-wrap"><canvas id="chartColdDetail"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Cold vs Warm Duration</div>
+          <div class="chart-subtitle">Comparison across memory tiers</div>
+          <div class="chart-wrap"><canvas id="chartColdWarm"></canvas></div>
+        </div>
+      </div>
+      <div class="table-card">
+        <div class="table-header">
+          <div class="section-title" style="margin-bottom:0">Cold Start Analysis Table</div>
+        </div>
+        <table id="coldTable"><thead></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <!-- ═══════════════ PAGE: RAW DATA ═══════════════ -->
+    <div class="page" id="page-rawdata">
+      <div class="table-card">
+        <div class="table-header">
+          <div class="section-title" style="margin-bottom:0">Raw Benchmark Data</div>
+          <div style="display:flex;gap:8px">
+            <input class="search-input" placeholder="🔍 Search..." oninput="filterTable('rawTable',this.value)">
+            <button class="btn btn-outline" onclick="downloadAll()">⬇️ Download CSV</button>
+          </div>
+        </div>
+        <table id="rawTable"><thead></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+
+  <!-- FOOTER -->
+  <div style="background:var(--bg2);border-top:1px solid var(--border);padding:12px 24px;display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--text3);">
+    <div style="display:flex;align-items:center;gap:8px"><span style="font-size:16px">⚡</span><strong style="color:var(--text2)">AWS Lambda Memory Benchmark Analysis</strong> · Performance and Cost Analysis of FastAPI Serverless Application</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <span class="badge badge-blue">AWS Lambda</span>
+      <span class="badge badge-blue">FastAPI</span>
+      <span class="badge badge-blue">Python</span>
+      <span class="badge badge-blue">API Gateway</span>
+      <span class="badge badge-blue">AWS CloudWatch</span>
+      <span style="color:var(--text3);margin-left:8px">Benchmark Region: eu-west-1</span>
+    </div>
+  </div>
+</div>
+
+<!-- TERMINAL OVERLAY -->
+<div id="terminal-overlay">
+  <div class="terminal-box">
+    <div class="terminal-header">
+      <div class="term-dot" style="background:#ff5f57"></div>
+      <div class="term-dot" style="background:#ffbd2e"></div>
+      <div class="term-dot" style="background:#28ca41"></div>
+      <div class="term-title">benchmark terminal — memory-benchmark · eu-west-1</div>
+      <button class="term-close" onclick="closeTerminal()">✕</button>
+    </div>
+    <div id="real-config-section" style="background:#161b22;padding:10px 16px;border-bottom:1px solid #30363d;display:flex;flex-direction:column;gap:10px">
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:200px">
+          <label for="stackPrefixInput" style="font-family:monospace;font-size:11px;color:#8b949e;white-space:nowrap">SAM Stack Name:</label>
+          <input type="text" id="stackPrefixInput" value="memory-benchmark" style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:5px 10px;color:#c9d1d9;font-family:monospace;font-size:11px;width:100%;outline:none">
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:180px">
+          <label for="regionInput" style="font-family:monospace;font-size:11px;color:#8b949e;white-space:nowrap">AWS Region:</label>
+          <input type="text" id="regionInput" value="eu-west-1" style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:5px 10px;color:#c9d1d9;font-family:monospace;font-size:11px;width:100%;outline:none">
+        </div>
+      </div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:200px">
+          <label for="warmRequestsInput" style="font-family:monospace;font-size:11px;color:#8b949e;white-space:nowrap">Warm Invocations:</label>
+          <input type="number" id="warmRequestsInput" value="50" min="1" max="100" style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:5px 10px;color:#c9d1d9;font-family:monospace;font-size:11px;width:100%;outline:none">
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:180px">
+          <label for="memoriesInput" style="font-family:monospace;font-size:11px;color:#8b949e;white-space:nowrap">Memory Tiers:</label>
+          <input type="text" id="memoriesInput" value="128, 256, 512, 1024, 2048, 3008" style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:5px 10px;color:#c9d1d9;font-family:monospace;font-size:11px;width:100%;outline:none">
+        </div>
+      </div>
+    </div>
+    <div id="terminal-output"></div>
+    <div class="term-footer">
+      <div>
+        <div class="term-status" id="termStatus">Ready to run benchmark…</div>
+        <div id="term-progress-bar"><div id="term-progress-fill"></div></div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-outline" onclick="closeTerminal()">Close</button>
+        <button class="btn btn-primary" id="runBtn" onclick="startBenchmark()">⚡ Run Real Benchmark</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════
+let analytics = {{ analytics | tojson }};
+let activeCharts = {};
+let filters = { endpoint: 'both', type: 'all', memories: new Set() };
+let sortState = {};
+
+// ═══════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', () => {
+  initMemoryFilters();
+  renderAll();
+});
+
+function renderAll() {
+  const hasData = (analytics.all_rows || []).length > 0;
+  const empty = document.getElementById('emptyState');
+  const content = document.getElementById('content');
+  if (empty) empty.style.display = hasData ? 'none' : 'block';
+  // Hide the actual pages (KPIs/charts/tables) while there is no data.
+  content.querySelectorAll('.page').forEach(p => p.style.display = hasData ? '' : 'none');
+  if (!hasData) return;
+
+  renderKPIs();
+  renderInsights();
+  renderRecommendation();
+  renderCharts();
+  renderTables();
+  renderHeatmap();
+}
+
+// ═══════════════════════════════════════════
+// FILTERS
+// ═══════════════════════════════════════════
+function initMemoryFilters() {
+  const mems = analytics.memories || [128,256,512,1024,2048,3008];
+  const wrap = document.getElementById('memChecks');
+  wrap.innerHTML = '';
+  mems.forEach(m => {
+    filters.memories.add(m);
+    const el = document.createElement('span');
+    el.className = 'mem-check active';
+    el.textContent = m + ' MB';
+    el.onclick = () => toggleMem(m, el);
+    wrap.appendChild(el);
+  });
+}
+
+function toggleMem(m, el) {
+  if (filters.memories.has(m)) { filters.memories.delete(m); el.classList.remove('active'); }
+  else { filters.memories.add(m); el.classList.add('active'); }
+  renderAll();
+}
+
+function setFilter(key, val, el) {
+  filters[key] = val;
+  el.parentElement.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  renderAll();
+}
+
+function getFilteredData(endpoint) {
+  let rows = analytics[endpoint] || [];
+  rows = rows.filter(r => filters.memories.has(r.memory_mb));
+  return rows;
+}
+
+// ═══════════════════════════════════════════
+// PAGE NAV
+// ═══════════════════════════════════════════
+function showPage(id, el) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + id).classList.add('active');
+  el.classList.add('active');
+}
+
+// ═══════════════════════════════════════════
+// KPI RENDER
+// ═══════════════════════════════════════════
+const KPI_ICONS = {
+  fastest_avg_response: '⚡',
+  lowest_cold_start: '🔥',
+  lowest_cost: '💰',
+  best_memory_config: '🏆',
+  total_runs: '📊',
+};
+
+function renderKPIs() {
+  const grid = document.getElementById('kpiGrid');
+  if (!grid || !analytics.kpis) return;
+  grid.innerHTML = '';
+  Object.entries(analytics.kpis).forEach(([key, kpi]) => {
+    const card = document.createElement('div');
+    card.className = 'kpi-card';
+    card.innerHTML = `
+      <div class="kpi-icon">${KPI_ICONS[key] || '📈'}</div>
+      <div class="kpi-label">${kpi.label}</div>
+      <div class="kpi-main">
+        <div class="kpi-value" data-target="${kpi.value.replace(/[^0-9.]/g,'')}">${kpi.value}</div>
+        <div class="kpi-unit">${kpi.unit}</div>
+      </div>
+      <div class="kpi-desc">${kpi.desc}</div>
+      <div class="kpi-trend">↗ ${kpi.trend}</div>
+    `;
+    grid.appendChild(card);
+  });
+  animateCounters();
+}
+
+function animateCounters() {
+  document.querySelectorAll('[data-target]').forEach(el => {
+    const target = parseFloat(el.dataset.target);
+    if (isNaN(target)) return;
+    const original = el.textContent;
+    const isFloat = original.includes('.');
+    const hasDollar = original.includes('$');
+    let start = 0, duration = 1000, startTime = null;
+    function step(ts) {
+      if (!startTime) startTime = ts;
+      const progress = Math.min((ts - startTime) / duration, 1);
+      const ease = 1 - Math.pow(1 - progress, 3);
+      const val = start + (target - start) * ease;
+      el.textContent = (hasDollar ? '$' : '') + (isFloat ? val.toFixed(2) : Math.round(val).toString());
+      if (progress < 1) requestAnimationFrame(step);
+      else el.textContent = original;
+    }
+    requestAnimationFrame(step);
+  });
+}
+
+// ═══════════════════════════════════════════
+// INSIGHTS
+// ═══════════════════════════════════════════
+function renderInsights() {
+  const list = document.getElementById('insightList');
+  if (!list) return;
+  const insights = analytics.insights || [];
+  list.innerHTML = insights.map((ins, i) => `
+    <div class="insight-item">
+      <span class="insight-num">0${i+1}</span>
+      <span class="insight-text">${ins}</span>
+    </div>
+  `).join('');
+}
+
+function renderRecommendation() {
+  const el = document.getElementById('recContent');
+  if (!el) return;
+  const rec = analytics.recommendation || {};
+  el.innerHTML = `
+    <div style="display:flex;align-items:flex-end;gap:6px;margin-bottom:8px">
+      <div class="rec-memory">${rec.memory || 'N/A'}</div>
+      <div class="rec-unit">MB</div>
+    </div>
+    <div class="rec-score">✓ Score ${rec.score || 0}/100</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:6px">
+      Avg Latency: <strong style="color:var(--text)">${(rec.warm_avg||0).toFixed(1)} ms</strong> ·
+      Cost: <strong style="color:var(--text)">$${(rec.cost_per_million||0).toFixed(3)}/1M</strong>
+    </div>
+    <div class="rec-reason">${rec.reason || ''}</div>
+  `;
+}
+
+// ═══════════════════════════════════════════
+// CHARTS
+// ═══════════════════════════════════════════
+const C = {
+  health:    '#60a5fa',
+  transform: '#a78bfa',
+  io:        '#34d399',
+  grid:      'rgba(30,58,95,0.5)',
+  text:      '#64748b',
+};
+
+function mkChart(id, config) {
+  const canvas = document.getElementById(id);
+  if (!canvas) return;
+  if (activeCharts[id]) { activeCharts[id].destroy(); }
+  const ctx = canvas.getContext('2d');
+  activeCharts[id] = new Chart(ctx, config);
+}
+
+const defaultScales = (yLabel='ms') => ({
+  x: { grid: { color: C.grid }, ticks: { color: C.text, font:{size:10} } },
+  y: { grid: { color: C.grid }, ticks: { color: C.text, font:{size:10} }, title: { display: true, text: yLabel, color: C.text, font:{size:10} } }
+});
+
+const defaultLegend = { labels: { color: '#94a3b8', font:{size:11}, boxWidth:12 } };
+
+function renderCharts() {
+  const mems = analytics.memories || [];
+  const labels = mems.map(m => m + ' MB');
+  const ch = analytics.charts || {};
+
+  // 1. Response Time
+  const datasets1 = [];
+  if (filters.endpoint !== 'transform' && filters.endpoint !== 'io') {
+    datasets1.push({ label:'Health', data: filterByMem(ch.health_warm, mems), borderColor:C.health, backgroundColor:C.health+'22', tension:0.4, pointRadius:4, fill:false });
+  }
+  if (filters.endpoint !== 'health' && filters.endpoint !== 'io') {
+    datasets1.push({ label:'Transform', data: filterByMem(ch.transform_warm, mems), borderColor:C.transform, backgroundColor:C.transform+'22', tension:0.4, pointRadius:4, fill:false });
+  }
+  if (filters.endpoint !== 'health' && filters.endpoint !== 'transform' && ch.io_warm) {
+    datasets1.push({ label:'I/O', data: filterByMem(ch.io_warm, mems), borderColor:C.io, backgroundColor:C.io+'22', tension:0.4, pointRadius:4, fill:false });
+  }
+  mkChart('chartResponseTime', { type:'line', data:{labels,datasets:datasets1}, options:{responsive:true,maintainAspectRatio:false,plugins:{legend:defaultLegend},scales:defaultScales('ms')} });
+
+  // 2. Cold Start
+  const csDatasets = [
+    { label:'Health', data: filterByMem(ch.health_cold, mems), backgroundColor: C.health+'cc', borderRadius:4 },
+    { label:'Transform', data: filterByMem(ch.transform_cold, mems), backgroundColor: C.transform+'cc', borderRadius:4 },
+  ];
+  if (analytics.has_io) csDatasets.push({ label:'I/O', data: filterByMem(ch.io_cold, mems), backgroundColor: C.io+'cc', borderRadius:4 });
+  mkChart('chartColdStart', { type:'bar', data:{labels,datasets:csDatasets}, options:{responsive:true,maintainAspectRatio:false,plugins:{legend:defaultLegend},scales:defaultScales('ms')} });
+
+  // 3. Cost
+  const costDs = [
+    { label:'Health', data:filterByMem(ch.health_cost,mems), borderColor:C.health, backgroundColor:C.health+'33', fill:true, tension:0.4 },
+    { label:'Transform', data:filterByMem(ch.transform_cost,mems), borderColor:C.transform, backgroundColor:C.transform+'33', fill:true, tension:0.4 },
+  ];
+  if (analytics.has_io) costDs.push({ label:'I/O', data:filterByMem(ch.io_cost,mems), borderColor:C.io, backgroundColor:C.io+'33', fill:true, tension:0.4 });
+  mkChart('chartCost', { type:'line', data:{labels,datasets:costDs}, options:{responsive:true,maintainAspectRatio:false,plugins:{legend:defaultLegend},scales:defaultScales('$/1M')} });
+
+  // 4. Cost vs Perf Quadrant
+  renderQuadrant();
+
+  // Health/Transform specific
+  renderEndpointCharts();
+
+  // Cost page charts
+  renderCostCharts();
+
+  // Performance radar + scatter
+  renderPerformanceCharts();
+
+  // Cold start detail
+  renderColdCharts();
+}
+
+function filterByMem(arr, mems) {
+  if (!arr) return [];
+  return mems.map((m, i) => filters.memories.has(m) ? arr[i] : null);
+}
+
+function renderQuadrant() {
+  const allRows = analytics.all_rows || [];
+  const colors = { health: C.health, transform: C.transform, io: C.io };
+  const data = allRows
+    .filter(r => filters.memories.has(r.memory_mb))
+    .map(r => ({
+      x: r.cost_per_million || 0,
+      y: r.warm_billed_avg_ms || 0,
+      label: `${r.endpoint} ${r.memory_mb}MB`,
+      ep: r.endpoint,
+    }));
+
+  const best = allRows.length ? analytics.recommendation : null;
+
+  mkChart('chartQuadrant', {
+    type: 'scatter',
+    data: {
+      datasets: [{
+        label: 'Configs',
+        data,
+        backgroundColor: data.map(d => (colors[d.ep] || '#fff') + 'aa'),
+        borderColor: data.map(d => colors[d.ep] || '#fff'),
+        pointRadius: 8,
+        pointHoverRadius: 11,
+      }]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      plugins: {
+        legend:{display:false},
+        tooltip: { callbacks: { label: ctx => `${ctx.raw.label} · cost $${ctx.raw.x.toFixed(3)}/1M · ${ctx.raw.y.toFixed(1)}ms` } }
+      },
+      scales: {
+        x: { grid:{color:C.grid}, ticks:{color:C.text,font:{size:10}}, title:{display:true,text:'Cost $/1M Requests',color:C.text,font:{size:10}} },
+        y: { grid:{color:C.grid}, ticks:{color:C.text,font:{size:10}}, title:{display:true,text:'Avg Latency (ms)',color:C.text,font:{size:10}} }
+      }
+    }
+  });
+}
+
+function renderEndpointCharts() {
+  const mems = analytics.memories || [];
+  const labels = mems.map(m => m + ' MB');
+  const ch = analytics.charts || {};
+  const health = analytics.health || [];
+  const transform = analytics.transform || [];
+  const io = analytics.io || [];
+
+  // Health latency
+  mkChart('chartHealthLatency', {
+    type:'line',
+    data:{ labels, datasets:[
+      { label:'Health Warm Avg', data:filterByMem(ch.health_warm,mems), borderColor:C.health, tension:0.4, pointRadius:4 }
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:defaultLegend},scales:defaultScales('ms')}
+  });
+
+  // Health billed bar
+  mkChart('chartHealthBilled', {
+    type:'bar',
+    data:{ labels, datasets:[
+      { label:'Billed Avg (ms)', data: filterByMem(health.map(r=>r.warm_billed_avg_ms), mems), backgroundColor:'#f59e0bcc', borderRadius:4 }
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:defaultLegend},scales:defaultScales('ms')}
+  });
+
+  // Transform latency
+  mkChart('chartTransformLatency', {
+    type:'line',
+    data:{ labels, datasets:[
+      { label:'Transform Warm Avg', data:filterByMem(ch.transform_warm,mems), borderColor:C.transform, tension:0.4, pointRadius:4 }
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:defaultLegend},scales:defaultScales('ms')}
+  });
+
+  // Transform cost
+  mkChart('chartTransformCost', {
+    type:'bar',
+    data:{ labels, datasets:[
+      { label:'Cost/1M ($)', data: filterByMem(transform.map(r=>r.cost_per_million), mems), backgroundColor:C.transform+'cc', borderRadius:4 }
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:defaultLegend},scales:defaultScales('$/1M')}
+  });
+
+  // I/O latency
+  mkChart('chartIoLatency', {
+    type:'line',
+    data:{ labels, datasets:[
+      { label:'I/O Warm Avg', data:filterByMem(ch.io_warm,mems), borderColor:C.io, tension:0.4, pointRadius:4 }
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:defaultLegend},scales:defaultScales('ms')}
+  });
+
+  // I/O billed bar
+  mkChart('chartIoBilled', {
+    type:'bar',
+    data:{ labels, datasets:[
+      { label:'Billed Avg (ms)', data: filterByMem(io.map(r=>r.warm_billed_avg_ms), mems), backgroundColor:C.io+'cc', borderRadius:4 }
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:defaultLegend},scales:defaultScales('ms')}
+  });
+
+  // Endpoint KPIs
+  renderEndpointKPIs('health', health, 'healthKpis', C.health);
+  renderEndpointKPIs('transform', transform, 'transformKpis', C.transform);
+  renderEndpointKPIs('io', io, 'ioKpis', C.io);
+}
+
+function renderEndpointKPIs(ep, rows, containerId, color) {
+  const el = document.getElementById(containerId);
+  if (!el || !rows.length) return;
+  const bestWarm = Math.min(...rows.map(r=>r.warm_billed_avg_ms));
+  const bestCold = Math.min(...rows.map(r=>r.cold_init_ms));
+  const bestCost = Math.min(...rows.map(r=>r.cost_per_million||9999));
+  const bestMem = rows.find(r=>r.warm_billed_avg_ms===bestWarm);
+  el.innerHTML = `
+    <div class="kpi-card"><div class="kpi-label">Fastest Warm</div><div class="kpi-main"><div class="kpi-value">${bestWarm.toFixed(1)}</div><div class="kpi-unit">ms</div></div><div class="kpi-trend">↗ Best warm latency</div></div>
+    <div class="kpi-card"><div class="kpi-label">Lowest Cold Start</div><div class="kpi-main"><div class="kpi-value">${bestCold.toFixed(0)}</div><div class="kpi-unit">ms</div></div><div class="kpi-trend">↗ Quickest init</div></div>
+    <div class="kpi-card"><div class="kpi-label">Cheapest</div><div class="kpi-main"><div class="kpi-value">$${bestCost.toFixed(3)}</div></div><div class="kpi-desc">per 1M req</div><div class="kpi-trend">↗ Cheapest config</div></div>
+    <div class="kpi-card"><div class="kpi-label">Best Config</div><div class="kpi-main"><div class="kpi-value">${bestMem?.memory_mb||0}</div><div class="kpi-unit">MB</div></div><div class="kpi-trend">↗ Top performer</div></div>
+  `;
+}
+
+function renderCostCharts() {
+  const mems = analytics.memories || [];
+  const labels = mems.map(m => m + ' MB');
+  const ch = analytics.charts || {};
+  const health = analytics.health || [];
+  const transform = analytics.transform || [];
+  const io = analytics.io || [];
+
+  const costDs = [
+    { label:'Health', data:filterByMem(ch.health_cost,mems), borderColor:C.health, backgroundColor:C.health+'33', fill:true, tension:0.4 },
+    { label:'Transform', data:filterByMem(ch.transform_cost,mems), borderColor:C.transform, backgroundColor:C.transform+'33', fill:true, tension:0.4 },
+  ];
+  if (analytics.has_io) costDs.push({ label:'I/O', data:filterByMem(ch.io_cost,mems), borderColor:C.io, backgroundColor:C.io+'33', fill:true, tension:0.4 });
+  mkChart('chartCostAll', { type:'line', data:{labels,datasets:costDs}, options:{responsive:true,maintainAspectRatio:false,plugins:{legend:defaultLegend},scales:defaultScales('$/1M')} });
+
+  const billedDs = [
+    { label:'Health', data: filterByMem(health.map(r=>r.warm_billed_avg_ms), mems), backgroundColor: C.health+'cc', borderRadius:4 },
+    { label:'Transform', data: filterByMem(transform.map(r=>r.warm_billed_avg_ms), mems), backgroundColor: C.transform+'cc', borderRadius:4 },
+  ];
+  if (analytics.has_io && io.length) billedDs.push({ label:'I/O', data: filterByMem(io.map(r=>r.warm_billed_avg_ms), mems), backgroundColor: C.io+'cc', borderRadius:4 });
+  mkChart('chartBilledAll', { type:'bar', data:{labels,datasets:billedDs}, options:{responsive:true,maintainAspectRatio:false,plugins:{legend:defaultLegend},scales:defaultScales('ms')} });
+}
+
+function renderPerformanceCharts() {
+  const mems = (analytics.memories || []).filter(m => filters.memories.has(m));
+  const allRows = analytics.all_rows || [];
+
+  // Radar: perf score per memory
+  const healthScores = mems.map(m => { const r = allRows.find(r=>r.endpoint==='health'&&r.memory_mb===m); return r?.perf_score||0; });
+  const transformScores = mems.map(m => { const r = allRows.find(r=>r.endpoint==='transform'&&r.memory_mb===m); return r?.perf_score||0; });
+  const ioScores = mems.map(m => { const r = allRows.find(r=>r.endpoint==='io'&&r.memory_mb===m); return r?.perf_score||0; });
+
+  mkChart('chartRadar', {
+    type:'radar',
+    data:{
+      labels: mems.map(m=>m+'MB'),
+      datasets:[
+        { label:'Health', data:healthScores, borderColor:C.health, backgroundColor:C.health+'44', pointBackgroundColor:C.health },
+        { label:'Transform', data:transformScores, borderColor:C.transform, backgroundColor:C.transform+'44', pointBackgroundColor:C.transform },
+        { label:'I/O', data:ioScores, borderColor:C.io, backgroundColor:C.io+'44', pointBackgroundColor:C.io },
+      ]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{legend:defaultLegend},
+      scales:{ r:{ grid:{color:C.grid}, ticks:{color:C.text,font:{size:9},backdropColor:'transparent'}, pointLabels:{color:'#94a3b8',font:{size:10}}, angleLines:{color:C.grid} } }
+    }
+  });
+
+  // Scatter bubble
+  const colors = { health: C.health, transform: C.transform, io: C.io };
+  const scatterData = allRows.filter(r=>filters.memories.has(r.memory_mb)).map(r => ({
+    x: r.warm_billed_avg_ms || 0,
+    y: r.cost_per_million || 0,
+    r: Math.max(5, Math.min(20, (r.cost_per_million||0)*4)),
+    ep: r.endpoint,
+    label: `${r.endpoint} ${r.memory_mb}MB`,
+  }));
+
+  const eps = ['health','transform','io'];
+  mkChart('chartScatter', {
+    type:'bubble',
+    data:{
+      datasets: eps.map(ep => ({
+        label: ep.charAt(0).toUpperCase()+ep.slice(1),
+        data: scatterData.filter(d=>d.ep===ep),
+        backgroundColor: (colors[ep]||'#fff') + '88',
+        borderColor: colors[ep]||'#fff',
+      }))
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{legend:defaultLegend, tooltip:{callbacks:{label:ctx=>`${ctx.raw.label} · ${ctx.raw.x.toFixed(1)}ms · $${ctx.raw.y.toFixed(3)}/1M`}}},
+      scales:{
+        x:{grid:{color:C.grid},ticks:{color:C.text,font:{size:10}},title:{display:true,text:'Avg Latency (ms)',color:C.text,font:{size:10}}},
+        y:{grid:{color:C.grid},ticks:{color:C.text,font:{size:10}},title:{display:true,text:'Cost $/1M',color:C.text,font:{size:10}}}
+      }
+    }
+  });
+}
+
+function renderColdCharts() {
+  const mems = analytics.memories || [];
+  const labels = mems.map(m=>m+' MB');
+  const ch = analytics.charts || {};
+
+  mkChart('chartColdDetail', {
+    type:'bar',
+    data:{labels, datasets:[
+      { label:'Health Init', data:filterByMem(ch.health_cold,mems), backgroundColor:C.health+'cc', borderRadius:4 },
+      { label:'Transform Init', data:filterByMem(ch.transform_cold,mems), backgroundColor:C.transform+'cc', borderRadius:4 },
+      { label:'I/O Init', data:filterByMem(ch.io_cold,mems), backgroundColor:C.io+'cc', borderRadius:4 },
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:defaultLegend},scales:defaultScales('ms')}
+  });
+
+  const health = analytics.health || [];
+  const transform = analytics.transform || [];
+  const io = analytics.io || [];
+  mkChart('chartColdWarm', {
+    type:'bar',
+    data:{labels, datasets:[
+      { label:'Health Cold Billed', data:filterByMem(health.map(r=>r.cold_billed_ms),mems), backgroundColor:'#ef444466', borderRadius:4 },
+      { label:'Health Warm Avg', data:filterByMem(health.map(r=>r.warm_billed_avg_ms),mems), backgroundColor:C.health+'cc', borderRadius:4 },
+      { label:'Transform Cold Billed', data:filterByMem(transform.map(r=>r.cold_billed_ms),mems), backgroundColor:'#f59e0b66', borderRadius:4 },
+      { label:'Transform Warm Avg', data:filterByMem(transform.map(r=>r.warm_billed_avg_ms),mems), backgroundColor:C.transform+'cc', borderRadius:4 },
+      { label:'I/O Cold Billed', data:filterByMem(io.map(r=>r.cold_billed_ms),mems), backgroundColor:C.io+'66', borderRadius:4 },
+      { label:'I/O Warm Avg', data:filterByMem(io.map(r=>r.warm_billed_avg_ms),mems), backgroundColor:C.io+'cc', borderRadius:4 },
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:defaultLegend},scales:defaultScales('ms')}
+  });
+}
+
+// ═══════════════════════════════════════════
+// HEATMAP
+// ═══════════════════════════════════════════
+function renderHeatmap() {
+  const wrap = document.getElementById('heatmapWrap');
+  if (!wrap) return;
+  const mems = (analytics.memories || []).filter(m=>filters.memories.has(m));
+  const health = analytics.health || [];
+  const transform = analytics.transform || [];
+  const io = analytics.io || [];
+
+  const metrics = [
+    { label: 'H · Avg Latency (ms)', key: 'warm_billed_avg_ms', rows: health },
+    { label: 'H · Cold Start (ms)', key: 'cold_init_ms', rows: health },
+    { label: 'H · Cost/1M ($)', key: 'cost_per_million', rows: health },
+    { label: 'T · Avg Latency (ms)', key: 'warm_billed_avg_ms', rows: transform },
+    { label: 'T · Cold Start (ms)', key: 'cold_init_ms', rows: transform },
+    { label: 'T · Cost/1M ($)', key: 'cost_per_million', rows: transform },
+    { label: 'I/O · Avg Latency (ms)', key: 'warm_billed_avg_ms', rows: io },
+    { label: 'I/O · Cold Start (ms)', key: 'cold_init_ms', rows: io },
+    { label: 'I/O · Cost/1M ($)', key: 'cost_per_million', rows: io },
+  ];
+
+  const getVal = (metric, mem) => {
+    const r = metric.rows.find(r=>r.memory_mb===mem);
+    return r ? (r[metric.key] ?? r.cost_per_million) : null;
+  };
+
+  const allVals = metrics.flatMap(m => mems.map(mem => getVal(m, mem)).filter(v=>v!=null));
+  const minV = Math.min(...allVals), maxV = Math.max(...allVals);
+
+  function color(v) {
+    if (v === null) return 'var(--bg3)';
+    const t = (v - minV) / (maxV - minV);
+    const r = Math.round(59 + (239-59)*t);
+    const g = Math.round(130 + (68-130)*t);
+    const b = Math.round(246 + (68-246)*t);
+    return `rgba(${r},${g},${b},0.7)`;
+  }
+
+  let html = `<table class="heatmap-table"><thead><tr><th></th>${mems.map(m=>`<th>${m}MB</th>`).join('')}</tr></thead><tbody>`;
+  metrics.forEach(metric => {
+    html += `<tr><td class="hm-label">${metric.label}</td>`;
+    mems.forEach(mem => {
+      const v = getVal(metric, mem);
+      const disp = v != null ? (metric.key === 'cost_per_million' ? '$'+v.toFixed(3) : v.toFixed(1)) : '—';
+      html += `<td style="background:${color(v)};color:#fff">${disp}</td>`;
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+}
+
+// ═══════════════════════════════════════════
+// TABLES
+// ═══════════════════════════════════════════
+function renderTables() {
+  renderEndpointTable('healthTable', analytics.health || [], 'health');
+  renderEndpointTable('transformTable', analytics.transform || [], 'transform');
+  renderEndpointTable('ioTable', analytics.io || [], 'io');
+  renderColdTable();
+  renderPerfTable();
+  renderRawTable();
+}
+
+const TABLE_COLS = [
+  { key:'memory_mb', label:'Memory', fmt: v=>`${v} MB` },
+  { key:'cold_init_ms', label:'Cold Start', fmt: v=>`${v?.toFixed(1)} ms` },
+  { key:'warm_billed_avg_ms', label:'Warm Avg', fmt: v=>`${v?.toFixed(1)} ms` },
+  { key:'warm_billed_p50_ms', label:'P50', fmt: v=>`${v?.toFixed(1)} ms` },
+  { key:'warm_billed_p95_ms', label:'P95', fmt: v=>`${v?.toFixed(1)} ms` },
+  { key:'est_cost_per_1k_usd', label:'Cost/1k ($)', fmt: v=>`$${(v||0).toFixed(5)}` },
+  { key:'cost_per_million', label:'Cost/1M ($)', fmt: v=>`$${(v||0).toFixed(3)}` },
+  { key:'perf_score', label:'Score', fmt: v=>`${v}` },
+];
+
+function renderEndpointTable(id, rows, ep) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  rows = rows.filter(r=>filters.memories.has(r.memory_mb));
+  const cols = TABLE_COLS.filter(c=>c.key!=='endpoint');
+  el.querySelector('thead').innerHTML = `<tr>${cols.map(c=>`<th onclick="sortTable('${id}','${c.key}')">${c.label} ↕</th>`).join('')}</tr>`;
+  el.querySelector('tbody').innerHTML = rows.map(row => `
+    <tr>${cols.map(c => {
+      if (c.key === 'perf_score') return `<td><div class="score-bar"><div class="score-fill" style="width:${row[c.key]||0}px"></div><span>${row[c.key]||0}</span></div></td>`;
+      return `<td>${c.fmt(row[c.key])}</td>`;
+    }).join('')}</tr>
+  `).join('');
+}
+
+function renderPerfTable() {
+  const el = document.getElementById('perfTable');
+  if (!el) return;
+  const allRows = (analytics.all_rows || []).filter(r=>filters.memories.has(r.memory_mb));
+  const cols = [
+    { key:'endpoint', label:'Endpoint', fmt: v=>`<span class="ep-badge ${v}">${v}</span>` },
+    { key:'memory_mb', label:'Memory', fmt: v=>`${v} MB` },
+    { key:'cold_init_ms', label:'Cold Start', fmt: v=>`${(v||0).toFixed(1)} ms` },
+    { key:'warm_billed_avg_ms', label:'Warm Avg', fmt: v=>`${(v||0).toFixed(1)} ms` },
+    { key:'warm_billed_p95_ms', label:'P95', fmt: v=>`${(v||0).toFixed(1)} ms` },
+    { key:'cost_per_million', label:'Cost/1M', fmt: v=>`$${(v||0).toFixed(3)}` },
+    { key:'perf_score', label:'Score', fmt: (v,row) => `<div class="score-bar"><div class="score-fill" style="width:${v||0}px"></div><span>${v||0}</span></div>` },
+  ];
+  el.querySelector('thead').innerHTML = `<tr>${cols.map(c=>`<th onclick="sortTable('perfTable','${c.key}')">${c.label} ↕</th>`).join('')}</tr>`;
+  el.querySelector('tbody').innerHTML = allRows.map(row => `<tr>${cols.map(c=>`<td>${c.fmt(row[c.key],row)}</td>`).join('')}</tr>`).join('');
+}
+
+function renderColdTable() {
+  const el = document.getElementById('coldTable');
+  if (!el) return;
+  const health = (analytics.health||[]).filter(r=>filters.memories.has(r.memory_mb));
+  const transform = (analytics.transform||[]).filter(r=>filters.memories.has(r.memory_mb));
+  const cols = ['Memory','H Cold (ms)','H Init (ms)','T Cold (ms)','T Init (ms)','Cold Delta (ms)'];
+  const mems = (analytics.memories||[]).filter(m=>filters.memories.has(m));
+  el.querySelector('thead').innerHTML = `<tr>${cols.map(c=>`<th>${c}</th>`).join('')}</tr>`;
+  el.querySelector('tbody').innerHTML = mems.map(m=>{
+    const h = health.find(r=>r.memory_mb===m)||{};
+    const t = transform.find(r=>r.memory_mb===m)||{};
+    const delta = ((h.cold_billed_ms||0)-(t.cold_billed_ms||0)).toFixed(0);
+    return `<tr>
+      <td>${m} MB</td>
+      <td>${(h.cold_billed_ms||0).toFixed(1)}</td>
+      <td>${(h.cold_init_ms||0).toFixed(1)}</td>
+      <td>${(t.cold_billed_ms||0).toFixed(1)}</td>
+      <td>${(t.cold_init_ms||0).toFixed(1)}</td>
+      <td style="color:${delta>0?'var(--red)':'var(--green)'}">${delta>0?'+':''}${delta}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderRawTable() {
+  const el = document.getElementById('rawTable');
+  if (!el) return;
+  const allRows = (analytics.all_rows||[]).filter(r=>filters.memories.has(r.memory_mb));
+  const cols = ['endpoint','memory_mb','cold_billed_ms','cold_init_ms','warm_billed_avg_ms','warm_billed_p50_ms','warm_billed_p95_ms','warm_billed_p99_ms','est_cost_per_1k_usd','cost_per_million','perf_score'];
+  const labels = ['Endpoint','Memory','Cold Billed','Cold Init','Warm Avg','P50','P95','P99','Cost/1k','Cost/1M','Score'];
+  el.querySelector('thead').innerHTML = `<tr>${labels.map((l,i)=>`<th onclick="sortTable('rawTable','${cols[i]}')">${l} ↕</th>`).join('')}</tr>`;
+  el.querySelector('tbody').innerHTML = allRows.map(row=>`<tr>${cols.map(k=>{
+    const v = row[k];
+    if (k==='endpoint') return `<td><span class="ep-badge ${v}">${v}</span></td>`;
+    if (typeof v === 'number') return `<td>${v.toFixed(v>10?1:4)}</td>`;
+    return `<td>${v??'—'}</td>`;
+  }).join('')}</tr>`).join('');
+}
+
+function filterTable(tableId, query) {
+  const tbody = document.getElementById(tableId)?.querySelector('tbody');
+  if (!tbody) return;
+  const q = query.toLowerCase();
+  tbody.querySelectorAll('tr').forEach(tr => {
+    tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+}
+
+function sortTable(tableId, key) {
+  const dir = sortState[tableId+key] === 'asc' ? 'desc' : 'asc';
+  sortState[tableId+key] = dir;
+  const tbody = document.getElementById(tableId)?.querySelector('tbody');
+  if (!tbody) return;
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  rows.sort((a,b) => {
+    const ai = getColIndex(tableId, key);
+    if (ai < 0) return 0;
+    const av = a.cells[ai]?.textContent.replace(/[^0-9.\-]/g,'') || '';
+    const bv = b.cells[ai]?.textContent.replace(/[^0-9.\-]/g,'') || '';
+    const af = parseFloat(av), bf = parseFloat(bv);
+    const cmp = isNaN(af) ? av.localeCompare(bv) : af - bf;
+    return dir === 'asc' ? cmp : -cmp;
+  });
+  rows.forEach(r => tbody.appendChild(r));
+}
+
+function getColIndex(tableId, key) {
+  const thead = document.getElementById(tableId)?.querySelector('thead tr');
+  if (!thead) return -1;
+  const ths = Array.from(thead.querySelectorAll('th'));
+  for (let i=0; i<ths.length; i++) {
+    if (ths[i].getAttribute('onclick')?.includes(`'${key}'`)) return i;
+  }
+  return -1;
+}
+
+// ═══════════════════════════════════════════
+// UPLOAD / RESET
+// ═══════════════════════════════════════════
+async function uploadCSV(input) {
+  const form = new FormData();
+  for (const file of input.files) form.append('files', file);
+  const res = await fetch('/api/upload', { method:'POST', body:form });
+  const data = await res.json();
+  if (data.analytics) {
+    analytics = data.analytics;
+    renderAll();
+  }
+}
+
+async function resetData() {
+  await fetch('/api/reset', { method:'POST' });
+  const res = await fetch('/api/data');
+  analytics = await res.json();
+  renderAll();
+}
+
+function downloadAll() {
+  ['health','transform','io'].forEach(ep => {
+    window.open(`/api/download/${ep}`, '_blank');
+  });
+}
+
+// ═══════════════════════════════════════════
+// TERMINAL / REAL BENCHMARK
+// ═══════════════════════════════════════════
+function openTerminal() {
+  document.getElementById('terminal-overlay').classList.add('show');
+  document.getElementById('termStatus').textContent = 'Ready to run benchmark…';
+  document.getElementById('term-progress-fill').style.width = '0%';
+  document.getElementById('runBtn').disabled = false;
+  document.getElementById('runBtn').textContent = '⚡ Run Real Benchmark';
+
+  document.getElementById('terminal-output').innerHTML = `
+    <div class="term-info"># AWS Lambda Memory Benchmark — Live AWS Mode</div>
+    <div class="term-info"># Invokes your deployed SAM stack and measures real billed durations.</div>
+    <div class="term-info"># Requirements: deployed SAM stack + configured local AWS credentials</div>
+    <div class="term-info" style="margin-top:12px">─────────────────────────────────────────────</div>
+    <div class="term-info">Click "⚡ Run Real Benchmark" to invoke live AWS Lambda functions.</div>
+  `;
+}
+
+function closeTerminal() {
+  document.getElementById('terminal-overlay').classList.remove('show');
+}
+
+function appendTermLine(html) {
+  const out = document.getElementById('terminal-output');
+  if (out) {
+    out.innerHTML += html + '\n';
+    out.scrollTop = out.scrollHeight;
+  }
+}
+
+function startBenchmark() {
+  runRealBenchmark();
+}
+
+async function runRealBenchmark() {
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Benchmarking…';
+  document.getElementById('terminal-output').innerHTML = '';
+  document.getElementById('termStatus').textContent = 'Real benchmark running (AWS)...';
+
+  const prefix = document.getElementById('stackPrefixInput').value.trim() || 'memory-benchmark';
+  const region = document.getElementById('regionInput').value.trim() || 'eu-west-1';
+  const warmReqs = document.getElementById('warmRequestsInput').value.trim() || '50';
+  const memoriesVal = document.getElementById('memoriesInput').value.trim() || '128, 256, 512, 1024, 2048, 3008';
+
+  const params = new URLSearchParams({
+    function_prefix: prefix,
+    region: region,
+    warm_requests: warmReqs,
+    memories: memoriesVal
+  });
+
+  appendTermLine(`<div class="term-info"># Starting real AWS Lambda memory benchmark...</div>`);
+  appendTermLine(`<div class="term-info"># Warning: This will run real invocations and billing charges may apply.</div>`);
+
+  const es = new EventSource('/api/real-benchmark/stream?' + params.toString());
+  
+  let stepCount = 0;
+  // Estimate total steps: each memory configuration for 3 endpoints + overhead
+  const totalSteps = (memoriesVal.split(',').length || 6) * 3 + 8; 
+
+  es.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    stepCount++;
+    const pct = Math.min(98, Math.round(stepCount/totalSteps*100));
+    document.getElementById('term-progress-fill').style.width = pct + '%';
+
+    if (msg.type === 'cmd') {
+      appendTermLine(`<div class="term-cmd">$ ${msg.text.replace('$ ','')}</div>`);
+    } else if (msg.type === 'info') {
+      appendTermLine(`<div class="term-info">${msg.text}</div>`);
+    } else if (msg.type === 'progress') {
+      appendTermLine(`<div class="term-progress">${msg.text}</div>`);
+    } else if (msg.type === 'log') {
+      appendTermLine(`<div class="term-log">${msg.text}</div>`);
+    } else if (msg.type === 'success') {
+      appendTermLine(`<div class="term-success">✓ ${msg.text}</div>`);
+    } else if (msg.type === 'error') {
+      appendTermLine(`<div class="term-error">⚠ Error: ${msg.text}</div>`);
+    } else if (msg.type === 'failed') {
+      appendTermLine(`<div class="term-error" style="margin-top:10px;font-weight:bold">❌ Real Benchmark Failed</div>`);
+      appendTermLine(`<div class="term-error">No new metrics were generated. The dashboard remains unchanged.</div>`);
+      document.getElementById('term-progress-fill').style.width = '100%';
+      document.getElementById('termStatus').textContent = 'Benchmark failed ❌';
+      btn.disabled = false;
+      btn.textContent = '⚡ Run Real Benchmark';
+      es.close();
+    } else if (msg.type === 'done') {
+      appendTermLine(`<div class="term-done" style="margin-top:10px">═══ Real Benchmark Complete ═══</div>`);
+      appendTermLine(`<div class="term-success">✓ Fresh AWS metrics loaded — dashboard updated</div>`);
+      document.getElementById('term-progress-fill').style.width = '100%';
+      document.getElementById('termStatus').textContent = 'Benchmark completed successfully ✓';
+      btn.disabled = false;
+      btn.textContent = '⚡ Run Real Benchmark';
+      if (msg.analytics) {
+        analytics = msg.analytics;
+        renderAll();
+      }
+      es.close();
+    }
+  };
+
+  es.onerror = () => {
+    appendTermLine(`<div class="term-error">Connection closed or failed. Please check your local AWS credentials and stack deployment.</div>`);
+    btn.disabled = false;
+    btn.textContent = '⚡ Run Real Benchmark';
+    es.close();
+  };
+}
+</script>
+</body>
+</html>
