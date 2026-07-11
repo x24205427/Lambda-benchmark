@@ -11,6 +11,7 @@ trivial. Invoked via a Lambda Function URL (CORS-enabled) from the static
 dashboard hosted on GitHub Pages.
 """
 
+import ipaddress
 import json
 import socket
 import ssl
@@ -24,11 +25,39 @@ DEFAULT_SAMPLES = 5
 PER_REQUEST_TIMEOUT = 10.0  # seconds
 MAX_BODY_READ = 2_000_000   # cap bytes read so huge pages don't blow memory/time
 
-CORS_HEADERS = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-}
+# Per-IP request quota (governance: CA report Table I "request quotas").
+# Fixed window, per warm container. A soft speed-bump against a single abusive
+# caller; genuine cross-container quotas would need DynamoDB/API Gateway.
+RATE_WINDOW_S = 60
+RATE_MAX_PER_WINDOW = 30
+_rate_state: dict = {}  # sourceIp -> (window_start_epoch, count)
+
+# CORS is handled by the Lambda Function URL's own Cors config (see template.yaml),
+# which is locked to the dashboard origin. The handler must NOT add its own
+# Access-Control-* headers, or the browser sees duplicate headers and rejects it.
+
+
+def _is_blocked_address(ip_str: str) -> bool:
+    """SSRF guard: refuse anything not a globally-routable public address.
+
+    Blocks private (RFC1918), loopback, link-local (incl. the 169.254.169.254
+    cloud metadata endpoint), reserved, multicast and CGNAT ranges so the
+    benchmarker cannot be used as a proxy to reach internal infrastructure.
+    """
+    try:
+        return not ipaddress.ip_address(ip_str).is_global
+    except ValueError:
+        return True  # unparseable -> refuse, fail closed
+
+
+def _rate_limited(source_ip: str) -> bool:
+    now = time.time()
+    window_start, count = _rate_state.get(source_ip, (now, 0))
+    if now - window_start >= RATE_WINDOW_S:
+        window_start, count = now, 0
+    count += 1
+    _rate_state[source_ip] = (window_start, count)
+    return count > RATE_MAX_PER_WINDOW
 
 
 def _percentile(values, pct):
@@ -84,6 +113,13 @@ def _time_one_request(parsed):
         result["dns_ms"] = round((time.perf_counter() - t0) * 1000, 2)
 
         family, socktype, proto, _, sockaddr = addrinfo[0]
+
+        # SSRF guard: block if the resolved address is not publicly routable.
+        # Checked on the exact address we are about to connect to, so DNS
+        # rebinding to an internal host is caught here, not just at parse time.
+        if _is_blocked_address(sockaddr[0]):
+            result["error"] = f"Blocked non-public address: {sockaddr[0]}"
+            return result
 
         # TCP connect
         t0 = time.perf_counter()
@@ -208,19 +244,20 @@ def _benchmark(url, samples):
 def _response(status, body):
     return {
         "statusCode": status,
-        "headers": {"Content-Type": "application/json", **CORS_HEADERS},
+        "headers": {"Content-Type": "application/json"},
         "body": json.dumps(body),
     }
 
 
 def handler(event, context):
-    # CORS preflight
-    method = (
-        event.get("requestContext", {}).get("http", {}).get("method")
-        or event.get("httpMethod")
+    # Preflight (OPTIONS) is answered automatically by the Function URL CORS layer.
+
+    # Per-IP request quota (governance: request quotas / rate limiting).
+    source_ip = (
+        event.get("requestContext", {}).get("http", {}).get("sourceIp", "unknown")
     )
-    if method == "OPTIONS":
-        return {"statusCode": 204, "headers": CORS_HEADERS, "body": ""}
+    if _rate_limited(source_ip):
+        return _response(429, {"error": "Rate limit exceeded. Please retry shortly."})
 
     # Accept the URL from a POST JSON body or a ?url= query param.
     url = None

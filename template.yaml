@@ -136,7 +136,9 @@ Resources:
       FunctionUrlConfig:
         AuthType: NONE
         Cors:
-          AllowOrigins: ["*"]
+          # Least privilege: only the GitHub Pages dashboard origin may call this
+          # from a browser (governance: restrict cross-origin access).
+          AllowOrigins: ["https://x24205427.github.io"]
           AllowMethods: ["*"]
           AllowHeaders: ["content-type"]
 
